@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>FAE</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 11px;
+      background: #232323;
+      color: #e6e6e6;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+    .status-card {
+      background: #2c2c2c;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      border: 1px solid #3c3c3c;
+    }
+    .status-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #666;
+    }
+    .status-dot.online { background: #4caf50; }
+    .status-dot.offline { background: #f44336; }
+    .status-text { font-weight: 600; font-size: 12px; }
+    
+    button {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 8px;
+      border: none;
+      border-radius: 4px;
+      background: #444;
+      color: white;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: #555; }
+    button.primary { background: #0d99ff; }
+    button.primary:hover:not(:disabled) { background: #0a8ce0; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .log-panel {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 4px;
+      height: 160px;
+      overflow-y: auto;
+      padding: 8px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 10px;
+      color: #aaa;
+    }
+    .log-entry { margin-bottom: 4px; border-bottom: 1px solid #222; padding-bottom: 2px; }
+    .log-time { color: #555; }
+    .log-msg.success { color: #9eff9e; }
+    .log-msg.error { color: #ff9e9e; }
+
+    .settings { margin: 12px 0; }
+    .setting { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    
+    .footer {
+      margin-top: 12px;
+      font-size: 9px;
+      color: #555;
+      display: flex;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+  <div class="status-card">
+    <div class="status-header">
+      <div class="status-dot" id="statusDot"></div>
+      <div class="status-text" id="statusText">Bridge Offline</div>
+    </div>
+    <div id="statusInfo" style="font-size: 10px; color: #888;">Checking http://localhost:7963...</div>
+  </div>
+
+  <button id="pullBtn" class="primary" disabled>Pull from Figma</button>
+  <button id="clearBtn">Clear Bridge Queue</button>
+
+  <div class="settings">
+    <div class="setting">
+      <input type="checkbox" id="autoPull" checked>
+      <label for="autoPull">Auto-pull on receive</label>
+    </div>
+    <div class="setting">
+      <input type="checkbox" id="useActiveComp">
+      <label for="useActiveComp">Place in active comp</label>
+    </div>
+  </div>
+
+  <div class="log-panel" id="logPanel">
+    <div class="log-entry"><span class="log-time">[15:00:00]</span> <span class="log-msg">Ready.</span></div>
+  </div>
+
+  <div class="footer">
+    <span>URL: localhost:7963</span>
+    <span id="pollCounter">Poll: 0</span>
+  </div>
+
+  <script src="./js/CSInterface.js"></script>
+  <script>
+    (function() {
+      var csInterface = new CSInterface();
+      var pullBtn = document.getElementById('pullBtn');
+      var clearBtn = document.getElementById('clearBtn');
+      var logPanel = document.getElementById('logPanel');
+      var statusDot = document.getElementById('statusDot');
+      var statusText = document.getElementById('statusText');
+      var pollCounter = document.getElementById('pollCounter');
+      
+      var BRIDGE_URL = 'http://localhost:7963';
+      var pollCount = 0;
+
+      function log(msg, type) {
+        var time = new Date().toLocaleTimeString([], { hour12: false });
+        var entry = document.createElement('div');
+        entry.className = 'log-entry';
+        entry.innerHTML = '<span class="log-time">[' + time + ']</span> <span class="log-msg ' + (type || '') + '">' + msg + '</span>';
+        logPanel.prepend(entry);
+      }
+
+      function updateStatus(online, pending) {
+        statusDot.className = 'status-dot ' + (online ? 'online' : 'offline');
+        statusText.textContent = online ? (pending ? 'Data Pending!' : 'Bridge Online') : 'Bridge Offline';
+        pullBtn.disabled = !online || !pending;
+      }
+
+      function poll() {
+        pollCount++;
+        pollCounter.textContent = 'Poll: ' + pollCount;
+        
+        fetch(BRIDGE_URL + '/ping')
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            updateStatus(true, data.pending);
+            if (data.pending && document.getElementById('autoPull').checked) {
+              doPull();
+            }
+          })
+          .catch(function(err) {
+            updateStatus(false, false);
+          });
+      }
+
+      function doPull() {
+        log('Pulling from Figma...');
+        fetch(BRIDGE_URL + '/pull')
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data.status === 'empty') {
+              log('No data found.');
+              return;
+            }
+            buildInAE(data);
+          })
+          .catch(function(err) {
+            log('Pull error: ' + err.message, 'error');
+          });
+      }
+
+      function buildInAE(data) {
+        log('Building ' + data.layers.length + ' layer(s) in AE...');
+        
+        // Escape JSON for ExtendScript
+        var jsonString = JSON.stringify(data);
+        var escapedJSON = jsonString.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        var useActiveComp = document.getElementById('useActiveComp').checked;
+
+        var script = "buildFromJSON('" + escapedJSON + "', " + useActiveComp + ")";
+        csInterface.evalScript(script, function(result) {
+          try {
+            var res = JSON.parse(result);
+            if (res.success) {
+              log('Success: ' + res.layerCount + ' layers in ' + res.compName, 'success');
+            } else {
+              log('AE Error: ' + res.error, 'error');
+            }
+          } catch (e) {
+            log('Eval error: ' + result, 'error');
+          }
+        });
+      }
+
+      pullBtn.addEventListener('click', doPull);
+      
+      clearBtn.addEventListener('click', function() {
+        fetch(BRIDGE_URL + '/clear', { method: 'DELETE' })
+          .then(function() { log('Queue cleared.'); })
+          .catch(function(err) { log('Clear failed.', 'error'); });
+      });
+
+      setInterval(poll, 2000);
+      poll();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "api": "1.0.0",
+  "editorType": ["figma"],
+  "id": "com.fae.figma-plugin",
+  "name": "FAE",
+  "main": "code.js",
+  "ui": "ui.html",
+  "networkAccess": {
+    "allowedDomains": ["localhost:7963"],
+    "devAllowedDomains": ["localhost:7963"]
+  }
+}
