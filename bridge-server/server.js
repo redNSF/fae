@@ -23,6 +23,7 @@ app.use(express.json({ limit: '50mb' }));
 
 // In-memory state
 var pendingTransfer = null;
+var pendingFigmaTransfer = null;
 var lastTransferTime = null;
 
 // GET /ping — Health check
@@ -79,7 +80,46 @@ app.get('/pull', function(req, res) {
 // DELETE /clear — Clear pending transfer without consuming
 app.delete('/clear', function(req, res) {
   pendingTransfer = null;
+  pendingFigmaTransfer = null;
   res.json({ status: 'cleared' });
+});
+
+// POST /push-to-figma — Receive layer data from AE extension
+app.post('/push-to-figma', function(req, res) {
+  var body = req.body;
+
+  if (!body.layers || !Array.isArray(body.layers)) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'Missing or invalid layers array'
+    });
+  }
+
+  pendingFigmaTransfer = {
+    layers: body.layers,
+    timestamp: Date.now()
+  };
+
+  console.log('[' + new Date().toISOString() + '] AE Push received: ' + body.layers.length + ' layers');
+
+  res.json({
+    status: 'queued',
+    count: body.layers.length
+  });
+});
+
+// GET /pull-figma — Figma plugin polls for pending transfers from AE
+app.get('/pull-figma', function(req, res) {
+  if (pendingFigmaTransfer === null) {
+    return res.json({ status: 'empty' });
+  }
+
+  var transfer = pendingFigmaTransfer;
+  pendingFigmaTransfer = null;
+
+  console.log('[' + new Date().toISOString() + '] Figma Pull served: ' + transfer.layers.length + ' layers');
+
+  res.json(transfer);
 });
 
 // GET /status — Debug information

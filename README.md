@@ -1,57 +1,96 @@
-# FAE — Figma → After Effects Bridge
+# FAE — Figma ↔ After Effects Bridge
 
-Build a three-component system that lets designers push Figma layers directly into Adobe After Effects as native AE layers.
+FAE is a three-part system that lets you push selected Figma layers directly into Adobe After Effects — and push AE layers back to Figma — through a local bridge server running on your machine.
 
-## Architecture
+---
 
+## Components
+
+| Component | What it is |
+|-----------|-----------|
+| `figma-plugin/` | Figma plugin — serializes selected layers and sends to bridge |
+| `fae-bridge-app/` | Windows tray app (Electron) — local Express server on port 7963 |
+| `ae-panel/` | After Effects CEP panel — receives layers from bridge and builds them in AE |
+
+---
+
+## Quick start (development)
+
+### 1. Run the bridge server
+```bash
+cd fae-bridge-app
+npm install
+npm start
 ```
-[Figma Plugin] ──POST──▶ [Bridge Server :7963] ◀──poll── [AE CEP Panel]
-                                                                │
-                                                         ExtendScript
-                                                                │
-                                               Shape / Text / Image / Precomp layers
+A tray icon appears in the Windows system tray. The bridge listens on `http://127.0.0.1:7963`.
+
+### 2. Install the Figma plugin (dev mode)
+1. Open Figma Desktop → **Plugins → Development → Import plugin from manifest**
+2. Select `figma-plugin/manifest.json`
+3. Run the plugin — select layers → **Push to After Effects**
+
+### 3. Install the AE panel (dev mode)
+Copy `ae-panel/` to your CEP extensions folder:
+- **Windows**: `%APPDATA%\Roaming\Adobe\CEP\extensions\com.fae.panel\`
+- **macOS**: `~/Library/Application Support/Adobe/CEP/extensions/com.fae.panel/`
+
+Enable unsigned extensions (dev only):
+```
+HKEY_CURRENT_USER\SOFTWARE\Adobe\CSXS.11 → PlayerDebugMode = 1
 ```
 
-## Setup Instructions
+Open After Effects → **Window → Extensions → FAE**
 
-### 1. Bridge Server
-- Navigate to `bridge-server/`
-- Run `npm install`
-- Start the server: `npm start`
-- The server runs on `http://localhost:7963`
+---
 
-### 2. Figma Plugin
-- Open Figma Desktop App
-- Go to **Plugins -> Development -> Import plugin from manifest...**
-- Select `figma-plugin/manifest.json`
-- Run the **FAE** plugin.
+## Distribution builds
 
-### 3. After Effects CEP Panel
-- **macOS:** Run `./install-mac.sh` to install the panel and enable debug mode.
-- **Windows:**
-  - Copy `ae-panel/` to `C:\Users\<YOU>\AppData\Roaming\Adobe\CEP\extensions\fae\`
-  - Enable Debug Mode: Run `reg add "HKCU\Software\Adobe\CSXS.11" /v PlayerDebugMode /t REG_SZ /d 1 /f` in Command Prompt (Administrator).
-- Restart After Effects.
-- Open the panel via **Window -> Extensions -> FAE**.
+### Figma plugin — Figma Community
+1. Go to [figma.com/developers](https://www.figma.com/developers) → **Create a plugin**
+2. Copy the assigned Plugin ID into `figma-plugin/manifest.json` (`"id"` field — currently `TODO_REPLACE_WITH_FIGMA_PLUGIN_ID`)
+3. Submit `code.js`, `ui.html`, `manifest.json` plus a 1920×960 cover image and 128×128 icon
 
-## Features
-- **Push Layers:** Select layers in Figma and click "Push to After Effects".
-- **Auto-Pull:** The AE panel polls the bridge and automatically builds layers when received.
-- **Supported Types:**
-  - Rectangles (with corner radius)
-  - Ellipses
-  - Text (preserves font, size, and color)
-  - Images (base64 encoded)
-  - Vectors (exported as high-res PNG)
-- **Settings:**
-  - Precomp Frames
-  - Split into separate layers
-  - 2x Image export
+### Bridge server — Windows installer
+```bash
+cd fae-bridge-app
+npm install
+npm run build:installer
+# → build/FAE Bridge Setup 1.0.0.exe
+```
+The installer is NSIS one-click, per-user, no admin required. Registers auto-startup on first launch.
+
+### AE panel — ZXP
+Requires `ZXPSignCmd` on PATH ([download](https://github.com/Adobe-CEP/CEP-Resources/tree/master/ZXPSignCMD)):
+```bash
+chmod +x package-zxp.sh
+./package-zxp.sh
+# → dist/FAE.zxp
+```
+
+**User installation:**
+1. Download `FAE.zxp`
+2. Download **ZXP/UXP Installer** from [aescripts.com](https://aescripts.com/learn/zxp-installer/) (free)
+3. Drag `FAE.zxp` into the installer
+4. Restart After Effects → **Window → Extensions → FAE**
+
+---
+
+## Bridge API
+
+All endpoints are on `http://127.0.0.1:7963`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/ping` | Health check — returns `{ status, version, pending }` |
+| `POST` | `/push` | Figma → AE: send layer data |
+| `GET` | `/pull` | AE panel polls for pending data |
+| `POST` | `/push-to-figma` | AE → Figma: send layer data |
+| `GET` | `/pull-figma` | Figma plugin polls for AE data |
+| `DELETE` | `/clear` | Clear all pending transfers |
+| `GET` | `/status` | Debug info |
+
+---
 
 ## License
-This project is licensed under the **GNU General Public License v3.0 or later**. See the [LICENSE](LICENSE) file for details.
 
-## Troubleshooting
-- **Bridge Offline:** Ensure the Node.js server is running.
-- **Panel not showing:** Ensure `PlayerDebugMode` is set to `1` for your AE version's CSXS registry key.
-- **Figma connection error:** Ensure the Bridge URL in the plugin UI matches your server address.
+GPL-3.0 — see [LICENSE](LICENSE)

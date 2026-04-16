@@ -8,7 +8,7 @@
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>
-      <Host Name="AEFT" Version="[17.0,99.9]" />
+      <Host Name="AEFT" Version="[15.0,99.9]" />
     </HostList>
     <LocaleList>
       <Locale Code="All" />
@@ -23,6 +23,10 @@
         <Resources>
           <MainPath>./index.html</MainPath>
           <ScriptPath>./jsx/builder.jsx</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--disable-web-security</Parameter>
+            <Parameter>--allow-running-insecure-content</Parameter>
+          </CEFCommandLine>
         </Resources>
         <Lifecycle>
           <AutoVisible>true</AutoVisible>

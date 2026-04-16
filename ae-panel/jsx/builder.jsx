@@ -73,8 +73,20 @@ function buildLayer(node, comp, project, settings) {
   } else if (node.type === "TEXT") {
     layer = buildTextLayer(node, comp);
   } else if (node.type === "FRAME" || node.type === "GROUP" || node.type === "COMPONENT" || node.type === "INSTANCE") {
-    if (settings.precomp && node.type === "FRAME") {
+    if (node.type === "COMPONENT" || (settings.precomp && node.type === "FRAME")) {
        layer = buildPrecomp(node, comp, project, settings);
+    } else if (node.type === "INSTANCE") {
+       if (node.mainComponentId) {
+          var existingComp = findPrecompByComponentId(project, node.mainComponentId);
+          if (existingComp) {
+             layer = comp.layers.add(existingComp);
+             layer.name = node.name;
+          } else {
+             layer = buildGroup(node, comp, project, settings);
+          }
+       } else {
+          layer = buildGroup(node, comp, project, settings);
+       }
     } else {
        layer = buildGroup(node, comp, project, settings);
     }
@@ -84,9 +96,51 @@ function buildLayer(node, comp, project, settings) {
 
   if (layer) {
     setBasicTransform(layer, node, comp);
+    if (node.effects && node.effects.length > 0) {
+      applyEffects(layer, node.effects);
+    }
     return true;
   }
   return false;
+}
+
+function applyEffects(layer, effects) {
+  for (var i = 0; i < effects.length; i++) {
+    var effect = effects[i];
+    if (effect.visible === false) continue;
+    
+    var fxProp = layer.property("Effects");
+    if (!fxProp) continue;
+
+    if (effect.type === "DROP_SHADOW") {
+      var ds = fxProp.addProperty("ADBE Drop Shadow");
+      if (ds) {
+        if (effect.color) {
+          ds.property("Shadow Color").setValue([effect.color.r, effect.color.g, effect.color.b]);
+          if (effect.color.a !== undefined) {
+            ds.property("Opacity").setValue(effect.color.a * 255); 
+          }
+        }
+        if (effect.offset) {
+          var y = effect.offset.y;
+          var x = effect.offset.x;
+          var angle = Math.atan2(y, x) * 180 / Math.PI;
+          ds.property("Direction").setValue(angle);
+          ds.property("Distance").setValue(Math.sqrt(x*x + y*y));
+        }
+        if (effect.radius !== undefined) {
+          ds.property("Softness").setValue(effect.radius);
+        }
+      }
+    } else if (effect.type === "LAYER_BLUR") {
+      var blur = fxProp.addProperty("ADBE Gaussian Blur 2");
+      if (blur && effect.radius !== undefined) {
+        blur.property("Blurriness").setValue(effect.radius);
+      }
+    } else if (effect.type === "INNER_SHADOW") {
+      fxProp.addProperty("ADBE Inner Shadow");
+    }
+  }
 }
 
 function buildShapeLayer(node, comp) {
@@ -169,17 +223,52 @@ function buildTextLayer(node, comp) {
   var textProp = layer.property("Source Text");
   var textDoc = textProp.value;
   
-  if (node.fontSize) textDoc.fontSize = node.fontSize;
-  if (node.fontName) textDoc.font = node.fontName.family + "-" + node.fontName.style;
-  
-  if (node.fills && node.fills.length > 0) {
-    var fill = node.fills[0];
-    if (fill.type === "SOLID") {
-        textDoc.fillColor = [fill.color.r/255, fill.color.g/255, fill.color.b/255];
+  if (node.styledSegments && node.styledSegments.length > 0) {
+    if (typeof textDoc.characterRange !== "undefined") {
+      for (var i = 0; i < node.styledSegments.length; i++) {
+        var seg = node.styledSegments[i];
+        var rangeLength = seg.end - seg.start;
+        if (rangeLength > 0) {
+          var cr = textDoc.characterRange(seg.start, rangeLength);
+          if (seg.fontSize) cr.fontSize = seg.fontSize;
+          if (seg.fontName) cr.font = seg.fontName.family + "-" + seg.fontName.style;
+          if (seg.color) cr.fillColor = [seg.color.r/255, seg.color.g/255, seg.color.b/255];
+        }
+      }
+      textProp.setValue(textDoc);
+    } else {
+      var baseSeg = node.styledSegments[0];
+      if (baseSeg.fontSize) textDoc.fontSize = baseSeg.fontSize;
+      if (baseSeg.fontName) textDoc.font = baseSeg.fontName.family + "-" + baseSeg.fontName.style;
+      if (baseSeg.color) textDoc.fillColor = [baseSeg.color.r/255, baseSeg.color.g/255, baseSeg.color.b/255];
+      textProp.setValue(textDoc);
+      
+      for (var i = 1; i < node.styledSegments.length; i++) {
+        var seg = node.styledSegments[i];
+        var animator = layer.property("Text").property("Animators").addProperty("ADBE Text Animator");
+        var selector = animator.property("Selectors").addProperty("ADBE Text Selector");
+        selector.property("Units").setValue(2); // 2 = Index
+        selector.property("Start").setValue(seg.start);
+        selector.property("End").setValue(seg.end);
+        
+        if (seg.color && (!baseSeg.color || seg.color.r !== baseSeg.color.r || seg.color.g !== baseSeg.color.g || seg.color.b !== baseSeg.color.b)) {
+           var fillProp = animator.property("Properties").addProperty("ADBE Text Fill Color");
+           fillProp.setValue([seg.color.r/255, seg.color.g/255, seg.color.b/255]);
+        }
+      }
     }
+  } else {
+    if (node.fontSize) textDoc.fontSize = node.fontSize;
+    if (node.fontName) textDoc.font = node.fontName.family + "-" + node.fontName.style;
+    if (node.fills && node.fills.length > 0) {
+      var fill = node.fills[0];
+      if (fill.type === "SOLID") {
+          textDoc.fillColor = [fill.color.r/255, fill.color.g/255, fill.color.b/255];
+      }
+    }
+    textProp.setValue(textDoc);
   }
   
-  textProp.setValue(textDoc);
   return layer;
 }
 
@@ -216,23 +305,72 @@ function buildGroup(node, comp, project, settings) {
   nullLayer.name = "[ " + node.name + " ]";
   nullLayer.label = 12; // Purple
 
+  var childLayers = [];
+
   if (node.children) {
-    for (var i = 0; i < node.children.length; i++) {
+    for (var i = node.children.length - 1; i >= 0; i--) {
       var child = node.children[i];
-      // We don't implement full recursion with parenting here for simplicity in this bridge script, 
-      // but the plan suggests building children.
-      // buildLayer(child, comp, project, settings);
+      var countBefore = comp.numLayers;
+      buildLayer(child, comp, project, settings);
+      var countAfter = comp.numLayers;
+      
+      if (countAfter > countBefore) {
+        for (var idx = 1; idx <= countAfter - countBefore; idx++) {
+          childLayers.push(comp.layer(idx));
+        }
+      }
     }
   }
+
+  if (node.clipsContent === true && childLayers.length > 0) {
+    var matte = comp.layers.addSolid([1, 1, 1], node.name + " Matte", Math.max(1, node.width || 100), Math.max(1, node.height || 100), 1);
+    var px = (node.x !== undefined ? node.x : 0) + (node.width || 100) / 2;
+    var py = (node.y !== undefined ? node.y : 0) + (node.height || 100) / 2;
+    matte.property("Position").setValue([px, py]);
+    matte.enabled = false;
+    
+    // Apply track matte to bottom-most child exclusively if older AE, or all mapped children natively in 23.0+
+    for (var k = 0; k < childLayers.length; k++) {
+      var targetLayer = childLayers[k];
+      if (typeof targetLayer.setTrackMatte !== "undefined") {
+        targetLayer.setTrackMatte(matte, TrackMatteType.ALPHA);
+      } else if (k === childLayers.length - 1) { 
+        matte.moveBefore(targetLayer);
+        targetLayer.trackMatteType = TrackMatteType.ALPHA;
+        break;
+      }
+    }
+  }
+
   return nullLayer;
 }
 
 function buildPrecomp(node, comp, project, settings) {
-  var precomp = project.items.addComp(node.name, node.width, node.height, 1, comp.duration, comp.frameRate);
-  // Build children into precomp...
+  var precomp = project.items.addComp(node.name, node.width || 100, node.height || 100, 1, comp.duration || 10, comp.frameRate || 30);
+  
+  // Save ID for reinstancing
+  precomp.comment = (node.type === "COMPONENT") ? node.id : node.mainComponentId;
+
+  if (node.children) {
+    for (var i = node.children.length - 1; i >= 0; i--) {
+      var child = node.children[i];
+      buildLayer(child, precomp, project, settings);
+    }
+  }
+
   var layer = comp.layers.add(precomp);
   layer.name = node.name;
   return layer;
+}
+
+function findPrecompByComponentId(project, id) {
+  for (var i = 1; i <= project.numItems; i++) {
+    var item = project.item(i);
+    if (item instanceof CompItem && item.comment === id) {
+      return item;
+    }
+  }
+  return null;
 }
 
 function setBasicTransform(layer, node, comp) {
@@ -376,4 +514,118 @@ function parseSVGPath(d) {
     outTangents: outTangents,
     closed: closed
   };
+}
+
+function extractShapeData(propGroup, outFills, outStrokes, outPaths) {
+  for (var i = 1; i <= propGroup.numProperties; i++) {
+    var prop = propGroup.property(i);
+    if (!prop) continue;
+    
+    if (prop.matchName === "ADBE Vector Graphic - Fill" && prop.enabled) {
+      var col = prop.property("Color").value;
+      var op = prop.property("Opacity").value / 100;
+      outFills.push({ r: col[0], g: col[1], b: col[2], a: op });
+    } else if (prop.matchName === "ADBE Vector Graphic - Stroke" && prop.enabled) {
+      var col = prop.property("Color").value;
+      var op = prop.property("Opacity").value / 100;
+      var sw = prop.property("Stroke Width").value;
+      outStrokes.push({ r: col[0], g: col[1], b: col[2], a: op, weight: sw });
+    } else if (prop.matchName === "ADBE Vector Shape - Group") {
+      try {
+        var pathObj = prop.property("Path").value;
+        outPaths.push({
+          vertices: pathObj.vertices,
+          inTangents: pathObj.inTangents,
+          outTangents: pathObj.outTangents,
+          closed: pathObj.closed
+        });
+      } catch(e) {}
+    } else if (prop.propertyType === PropertyType.PROPERTY_GROUP || prop.propertyType === PropertyType.INDEXED_GROUP) {
+      extractShapeData(prop, outFills, outStrokes, outPaths);
+    }
+  }
+}
+
+function readSelection() {
+  try {
+    if (!app.project.activeItem || !(app.project.activeItem instanceof CompItem)) {
+      return JSON.stringify({ success: false, error: "No active comp selected." });
+    }
+    
+    var comp = app.project.activeItem;
+    var selected = comp.selectedLayers;
+    if (selected.length === 0) {
+      return JSON.stringify({ success: false, error: "No layers selected." });
+    }
+    
+    var layersData = [];
+    
+    for (var i = 0; i < selected.length; i++) {
+      var layer = selected[i];
+      var data = {
+        name: layer.name,
+        type: "UNKNOWN",
+        x: layer.property("Transform").property("Position").value[0],
+        y: layer.property("Transform").property("Position").value[1],
+        rotation: layer.property("Transform").property("Rotation").value,
+        opacity: layer.property("Transform").property("Opacity").value / 100,
+        scaleX: layer.property("Transform").property("Scale").value[0] / 100,
+        scaleY: layer.property("Transform").property("Scale").value[1] / 100,
+        visible: layer.enabled
+      };
+      
+      var ap = layer.property("Transform").property("Anchor Point").value;
+      data.anchorX = ap[0];
+      data.anchorY = ap[1];
+      
+      if (layer instanceof ShapeLayer) {
+        data.type = "SHAPE";
+        var outFills = [];
+        var outStrokes = [];
+        var outPaths = [];
+        extractShapeData(layer.property("Contents"), outFills, outStrokes, outPaths);
+        data.fills = outFills;
+        data.strokes = outStrokes;
+        data.paths = outPaths;
+        
+        if (typeof layer.sourceRectAtTime === 'function') {
+          var rect = layer.sourceRectAtTime(comp.time, false);
+          data.width = rect.width;
+          data.height = rect.height;
+          data.rectLeft = rect.left;
+          data.rectTop = rect.top;
+        }
+      } else if (layer instanceof TextLayer) {
+        data.type = "TEXT";
+        var textDoc = layer.property("Source Text").value;
+        data.characters = textDoc.text;
+        data.fontSize = textDoc.fontSize;
+        data.fontName = textDoc.font;
+        if (textDoc.fillColor) {
+           data.fillColor = {
+              r: textDoc.fillColor[0],
+              g: textDoc.fillColor[1],
+              b: textDoc.fillColor[2]
+           };
+        }
+        if (typeof layer.sourceRectAtTime === 'function') {
+          var rect = layer.sourceRectAtTime(comp.time, false);
+          data.width = rect.width;
+          data.height = rect.height;
+          data.rectLeft = rect.left;
+          data.rectTop = rect.top;
+        }
+      } else if (layer instanceof AVLayer) {
+        data.type = (layer.source instanceof CompItem) ? "PRECOMP" : "AVLAYER";
+        data.width = layer.width;
+        data.height = layer.height;
+      }
+      
+      layersData.push(data);
+    }
+    
+    return JSON.stringify({ success: true, layers: layersData });
+  } catch (err) {
+    return JSON.stringify({ success: false, error: err.toString() });
+  }
 }

@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+fae-bridge-app/node_modules/
+
+# Build outputs
+fae-bridge-app/build/
+dist/
+
+# Signing certificate — NEVER commit this
+FAE_cert.p12
+
+# Electron builder cache
+fae-bridge-app/.cache/
+
+# Logs
+fae-bridge-app/*.log
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.suo
+*.user

@@ -1,12 +1,12 @@
 {
   "api": "1.0.0",
-  "editorType": ["figma"],
-  "id": "com.fae.figma-plugin",
+  "id": "TODO_REPLACE_WITH_FIGMA_PLUGIN_ID",
   "name": "FAE",
   "main": "code.js",
   "ui": "ui.html",
+  "permissions": ["currentuser"],
   "networkAccess": {
-    "allowedDomains": ["localhost:7963"],
-    "devAllowedDomains": ["localhost:7963"]
+    "allowedDomains": ["http://localhost:7963"],
+    "devAllowedDomains": ["http://localhost:7963"]
   }
 }

@@ -93,6 +93,7 @@
   </div>
 
   <button id="pullBtn" class="primary" disabled>Pull from Figma</button>
+  <button id="pushToFigmaBtn" class="primary" style="background:#f24e1e;">Push to Figma</button>
   <button id="clearBtn">Clear Bridge Queue</button>
 
   <div class="settings">
@@ -120,6 +121,7 @@
     (function() {
       var csInterface = new CSInterface();
       var pullBtn = document.getElementById('pullBtn');
+      var pushToFigmaBtn = document.getElementById('pushToFigmaBtn');
       var clearBtn = document.getElementById('clearBtn');
       var logPanel = document.getElementById('logPanel');
       var statusDot = document.getElementById('statusDot');
@@ -200,6 +202,41 @@
       }
 
       pullBtn.addEventListener('click', doPull);
+      
+      pushToFigmaBtn.addEventListener('click', function() {
+        log('Reading AE selection...');
+        csInterface.evalScript('readSelection()', function(result) {
+           try {
+             var data = JSON.parse(result);
+             if (!data.success) {
+               log('AE Error: ' + data.error, 'error');
+               return;
+             }
+             
+             log('Pushing ' + data.layers.length + ' layer(s) to Figma...');
+             
+             fetch(BRIDGE_URL + '/push-to-figma', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify({ layers: data.layers })
+             })
+             .then(function(r) { return r.json(); })
+             .then(function(res) {
+               if (res.status === 'queued') {
+                 log('Data pushed successfully.', 'success');
+               } else {
+                 log('Server Error: ' + res.message, 'error');
+               }
+             })
+             .catch(function(err) {
+               log('Network Error: ' + err.message, 'error');
+             });
+             
+           } catch(e) {
+             log('Parse error: ' + e.message, 'error');
+           }
+        });
+      });
       
       clearBtn.addEventListener('click', function() {
         fetch(BRIDGE_URL + '/clear', { method: 'DELETE' })

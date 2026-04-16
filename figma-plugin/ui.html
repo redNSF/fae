@@ -153,6 +153,25 @@
       checkStatus();
       setInterval(checkStatus, 3000);
 
+      function pollAE() {
+        var url = getServerUrl() + '/pull-figma';
+        fetch(url)
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+             if (data.status !== 'empty' && data.layers) {
+                showMessage('Received ' + data.layers.length + ' layer(s) from AE', 'success');
+                parent.postMessage({
+                  pluginMessage: {
+                    type: 'pull-ae-data',
+                    payload: data
+                  }
+                }, '*');
+             }
+          })
+          .catch(function(err) {});
+      }
+      setInterval(pollAE, 3000);
+
       // Re-check when URL changes
       serverUrlInput.addEventListener('change', checkStatus);
 
