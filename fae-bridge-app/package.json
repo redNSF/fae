@@ -1,18 +1,21 @@
 {
   "name": "fae-bridge",
   "version": "1.0.0",
+  "author": "Riyad Shuvro",
   "description": "FAE Bridge — Figma ↔ After Effects local bridge server",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win --x64",
-    "build:installer": "electron-builder --win nsis --x64"
+    "build:portable": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
+    "build:installer": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis --x64"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.18.2"
   },
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "electron": "^28.0.0",
     "electron-builder": "^24.0.0"
   },
@@ -27,11 +30,15 @@
       {
         "from": "assets/",
         "to": "assets/",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
-      "target": "nsis",
+      "target": [
+        { "target": "portable", "arch": ["x64"] }
+      ],
       "icon": "assets/tray-icon.png"
     },
     "nsis": {

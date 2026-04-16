@@ -290,9 +290,19 @@ async function reconstructAENodes(payload) {
   var layers = payload.layers;
   
   // Font loading is strictly required by Figma API before instantiating text
-  try {
-    await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-  } catch(e) {}
+  async function loadFont(font) {
+    try {
+      await figma.loadFontAsync(font);
+      return true;
+    } catch (e) {
+      try {
+        await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+        return true;
+      } catch (e2) {
+        return false;
+      }
+    }
+  }
 
   // Parse in reverse to maintain accurate AE z-index mapping (AE index 0 = top)
   for (var i = layers.length - 1; i >= 0; i--) {
@@ -325,9 +335,25 @@ async function reconstructAENodes(payload) {
        }
     } else if (l.type === "TEXT") {
        node = figma.createText();
+       var fontName = { family: "Inter", style: "Regular" };
+       if (l.fontName) {
+           // AE font names are often "Family-Style" or just "Family"
+           var parts = l.fontName.split('-');
+           if (parts.length > 1) {
+               fontName = { family: parts[0], style: parts[1] };
+           } else {
+               fontName = { family: l.fontName, style: "Regular" };
+           }
+       }
+       
+       await loadFont(fontName);
        try {
+           node.fontName = fontName;
+       } catch(e) {
+           await loadFont({ family: "Inter", style: "Regular" });
            node.fontName = { family: "Inter", style: "Regular" };
-       } catch(e) {}
+       }
+
        node.characters = l.characters || "Text";
        node.fontSize = (l.fontSize || 12) * Math.abs(l.scaleX || 1);
        if (l.fillColor) {

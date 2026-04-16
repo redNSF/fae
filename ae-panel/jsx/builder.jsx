@@ -1,6 +1,6 @@
 /*
  * FAE — After Effects Layer Builder
- * Copyright (C) 2026 Riyad
+ * Copyright (C) 2026 Riyad Shuvro
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -10,9 +10,46 @@
 
 // ExtendScript (ES3)
 
+// Minimal JSON polyfill for ExtendScript
+if (typeof JSON !== "object") {
+  JSON = {};
+}
+if (typeof JSON.stringify !== "function") {
+  JSON.stringify = function(obj) {
+    var t = typeof (obj);
+    if (t !== "object" || obj === null) {
+      if (t === "string") obj = '"' + obj + '"';
+      return String(obj);
+    } else {
+      var n, v, json = [], arr = (obj && obj.constructor === Array);
+      for (n in obj) {
+        v = obj[n]; t = typeof (v);
+        if (t === "string") v = '"' + v + '"';
+        else if (t === "object" && v !== null) v = JSON.stringify(v);
+        json.push((arr ? "" : '"' + n + '":') + String(v));
+      }
+      return (arr ? "[" : "{") + String(json) + (arr ? "]" : "}");
+    }
+  };
+}
+if (typeof JSON.parse !== "function") {
+  JSON.parse = function(str) {
+    return eval("(" + str + ")");
+  };
+}
+
+if (!Array.prototype.indexOf) {
+  Array.prototype.indexOf = function(item) {
+    for (var i = 0; i < this.length; i++) {
+      if (this[i] === item) return i;
+    }
+    return -1;
+  };
+}
+
 function buildFromJSON(jsonString, useActiveComp) {
   try {
-    var data = eval("(" + jsonString + ")");
+    var data = JSON.parse(jsonString);
     if (!data || !data.layers) return JSON.stringify({ success: false, error: "Invalid JSON data" });
 
     app.beginUndoGroup("FAE: Import");
@@ -21,9 +58,10 @@ function buildFromJSON(jsonString, useActiveComp) {
     var comp = getOrCreateComp(data, useActiveComp, project);
     
     var count = 0;
+    var settings = data.settings || {};
     for (var i = data.layers.length - 1; i >= 0; i--) {
       try {
-        if (buildLayer(data.layers[i], comp, project, data.settings)) {
+        if (buildLayer(data.layers[i], comp, project, settings, null)) {
           count++;
         }
       } catch (err) {
@@ -63,30 +101,18 @@ function getOrCreateComp(data, useActiveComp, project) {
   return project.items.addComp(name, w, h, 1, 30, 24);
 }
 
-function buildLayer(node, comp, project, settings) {
+function buildLayer(node, comp, project, settings, parentLayer) {
   if (node.visible === false) return false;
 
   var layer;
 
   if (node.hasImage && node.imageData) {
-    layer = buildImageLayer(node, comp, project);
+    layer = buildImageLayer(node, comp, project, settings);
   } else if (node.type === "TEXT") {
     layer = buildTextLayer(node, comp);
   } else if (node.type === "FRAME" || node.type === "GROUP" || node.type === "COMPONENT" || node.type === "INSTANCE") {
     if (node.type === "COMPONENT" || (settings.precomp && node.type === "FRAME")) {
        layer = buildPrecomp(node, comp, project, settings);
-    } else if (node.type === "INSTANCE") {
-       if (node.mainComponentId) {
-          var existingComp = findPrecompByComponentId(project, node.mainComponentId);
-          if (existingComp) {
-             layer = comp.layers.add(existingComp);
-             layer.name = node.name;
-          } else {
-             layer = buildGroup(node, comp, project, settings);
-          }
-       } else {
-          layer = buildGroup(node, comp, project, settings);
-       }
     } else {
        layer = buildGroup(node, comp, project, settings);
     }
@@ -95,7 +121,8 @@ function buildLayer(node, comp, project, settings) {
   }
 
   if (layer) {
-    setBasicTransform(layer, node, comp);
+    if (parentLayer) layer.parent = parentLayer;
+    setBasicTransform(layer, node, comp, parentLayer);
     if (node.effects && node.effects.length > 0) {
       applyEffects(layer, node.effects);
     }
@@ -272,7 +299,7 @@ function buildTextLayer(node, comp) {
   return layer;
 }
 
-function buildImageLayer(node, comp, project) {
+function buildImageLayer(node, comp, project, settings) {
   // Base64 decode and write to temp file
   var folder = new Folder(Folder.temp.absoluteURI + "/fae_images");
   if (!folder.exists) folder.create();
@@ -292,8 +319,9 @@ function buildImageLayer(node, comp, project) {
     var layer = comp.layers.add(footage);
     layer.name = node.name;
     
-    // Figma exports at 2x by default in our setup
-    layer.property("Scale").setValue([50, 50, 100]);
+    // Figma exports at 2x if export2x setting is true
+    var scaleVal = (settings && settings.export2x) ? 50 : 100;
+    layer.property("Scale").setValue([scaleVal, scaleVal, 100]);
     return layer;
   } catch (err) {
     return comp.layers.addSolid([0.5, 0.5, 0.5], node.name, node.width, node.height, 1);
@@ -311,7 +339,7 @@ function buildGroup(node, comp, project, settings) {
     for (var i = node.children.length - 1; i >= 0; i--) {
       var child = node.children[i];
       var countBefore = comp.numLayers;
-      buildLayer(child, comp, project, settings);
+      buildLayer(child, comp, project, settings, nullLayer);
       var countAfter = comp.numLayers;
       
       if (countAfter > countBefore) {
@@ -354,7 +382,7 @@ function buildPrecomp(node, comp, project, settings) {
   if (node.children) {
     for (var i = node.children.length - 1; i >= 0; i--) {
       var child = node.children[i];
-      buildLayer(child, precomp, project, settings);
+      buildLayer(child, precomp, project, settings, null);
     }
   }
 
@@ -373,11 +401,27 @@ function findPrecompByComponentId(project, id) {
   return null;
 }
 
-function setBasicTransform(layer, node, comp) {
+function setBasicTransform(layer, node, comp, parentLayer) {
+  // Figma x/y is top-left. AE Position is relative to anchor point.
+  // We center the anchor point for the layer to match our Figma serialization.
+  var w = node.width || 100;
+  var h = node.height || 100;
+  
+  // Set anchor point to center
+  if (layer instanceof ShapeLayer || layer instanceof TextLayer || layer instanceof AVLayer) {
+     layer.property("Anchor Point").setValue([w/2, h/2]);
+  }
+
   // Set position (centering in AE)
-  var x = node.x + (node.width / 2);
-  var y = node.y + (node.height / 2);
-  layer.property("Position").setValue([x, y]);
+  var x = (node.x || 0) + (w / 2);
+  var y = (node.y || 0) + (h / 2);
+  
+  // If parented, Figma x/y is already relative to parent frame top-left
+  if (parentLayer) {
+     layer.property("Position").setValue([(node.x || 0) + w/2, (node.y || 0) + h/2]);
+  } else {
+     layer.property("Position").setValue([x, y]);
+  }
   
   if (node.rotation) {
     layer.property("Rotation").setValue(-node.rotation);
@@ -394,22 +438,24 @@ function formatDate(date) {
 
 // Simple Base64 decoder for ExtendScript
 function decodeBase64ToBinary(s) {
-  var lookup = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345556789+/";
+  var lookup = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   var buffer = "";
   var i = 0;
   while (i < s.length) {
     var c1 = lookup.indexOf(s.charAt(i++));
     var c2 = lookup.indexOf(s.charAt(i++));
-    var c3 = lookup.indexOf(s.charAt(i++));
-    var c4 = lookup.indexOf(s.charAt(i++));
-    
+    var char3 = s.charAt(i++);
+    var char4 = s.charAt(i++);
+    var c3 = lookup.indexOf(char3);
+    var c4 = lookup.indexOf(char4);
+
     var b1 = (c1 << 2) | (c2 >> 4);
     var b2 = ((c2 & 15) << 4) | (c3 >> 2);
     var b3 = ((c3 & 3) << 6) | c4;
-    
+
     buffer += String.fromCharCode(b1);
-    if (c3 !== 64) buffer += String.fromCharCode(b2);
-    if (c4 !== 64) buffer += String.fromCharCode(b3);
+    if (char3 !== "=" && c3 !== -1) buffer += String.fromCharCode(b2);
+    if (char4 !== "=" && c4 !== -1) buffer += String.fromCharCode(b3);
   }
   return buffer;
 }
