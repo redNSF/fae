@@ -79,6 +79,16 @@ function serializeNode(node, settings) {
     data.cornerRadius = node.topLeftRadius;
   }
 
+  // Vector paths
+  if (node.vectorPaths) {
+    data.vectorPaths = node.vectorPaths.map(function(path) {
+      return {
+        windingRule: path.windingRule,
+        data: path.data
+      };
+    });
+  }
+
   // Text-specific properties
   if (node.type === 'TEXT') {
     data.characters = node.characters;

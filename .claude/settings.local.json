@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npm ls:*)",
+      "Bash(node -e \"const server = require\\(''./server.js''\\); setTimeout\\(\\(\\) => process.exit\\(0\\), 1000\\);\")",
+      "Bash(curl -s http://127.0.0.1:7963/ping)",
+      "Bash(kill 670)",
+      "Bash(curl -s -X POST http://127.0.0.1:7963/push -H \"Content-Type: application/json\" -d '{\"\"layers\"\":[{\"\"name\"\":\"\"Test\"\",\"\"type\"\":\"\"RECTANGLE\"\"}],\"\"pageName\"\":\"\"TestPage\"\"}')",
+      "Bash(pkill -f \"node server.js\")",
+      "Bash(node server.js)",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :7963)",
+      "Bash(taskkill:*)",
+      "Bash(kill 733)",
+      "Bash(curl:*)",
+      "Bash(kill 643)"
+    ]
+  }
+}

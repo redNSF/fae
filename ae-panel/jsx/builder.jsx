@@ -97,20 +97,39 @@ function buildShapeLayer(node, comp) {
   var group = contents.addProperty("ADBE Vector Group");
   group.name = node.name;
   
-  var shape;
-  if (node.type === "RECTANGLE") {
-    shape = group.property("Contents").addProperty("ADBE Vector Shape - Rect");
-    shape.property("Size").setValue([node.width, node.height]);
+  if (node.vectorPaths && node.vectorPaths.length > 0) {
+    for (var i = 0; i < node.vectorPaths.length; i++) {
+      var parsed = parseSVGPath(node.vectorPaths[i].data);
+      var pathGroup = group.property("Contents").addProperty("ADBE Vector Shape - Group");
+      var pathProperty = pathGroup.property("Path");
+      var shape = new Shape();
+      
+      var hw = (node.width || 0) / 2;
+      var hh = (node.height || 0) / 2;
+      var verts = [];
+      for (var v = 0; v < parsed.vertices.length; v++) {
+        verts.push([parsed.vertices[v][0] - hw, parsed.vertices[v][1] - hh]);
+      }
+      
+      shape.vertices = verts;
+      shape.inTangents = parsed.inTangents;
+      shape.outTangents = parsed.outTangents;
+      shape.closed = parsed.closed;
+      pathProperty.setValue(shape);
+    }
+  } else if (node.type === "RECTANGLE") {
+    var shapeGroup = group.property("Contents").addProperty("ADBE Vector Shape - Rect");
+    shapeGroup.property("Size").setValue([node.width, node.height]);
     if (node.cornerRadius) {
-      shape.property("Roundness").setValue(node.cornerRadius);
+      shapeGroup.property("Roundness").setValue(node.cornerRadius);
     }
   } else if (node.type === "ELLIPSE") {
-    shape = group.property("Contents").addProperty("ADBE Vector Shape - Ellipse");
-    shape.property("Size").setValue([node.width, node.height]);
+    var shapeGroup = group.property("Contents").addProperty("ADBE Vector Shape - Ellipse");
+    shapeGroup.property("Size").setValue([node.width, node.height]);
   } else {
     // Fallback Rect for unknown types
-    shape = group.property("Contents").addProperty("ADBE Vector Shape - Rect");
-    shape.property("Size").setValue([node.width, node.height]);
+    var shapeGroup = group.property("Contents").addProperty("ADBE Vector Shape - Rect");
+    shapeGroup.property("Size").setValue([node.width, node.height]);
   }
 
   addFillsAndStrokes(group.property("Contents"), node);
@@ -255,4 +274,106 @@ function decodeBase64ToBinary(s) {
     if (c4 !== 64) buffer += String.fromCharCode(b3);
   }
   return buffer;
+}
+
+function parseSVGPath(d) {
+  var vertices = [];
+  var inTangents = [];
+  var outTangents = [];
+  var closed = false;
+
+  var tokens = [];
+  var regex = /([a-zA-Z])|([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)/g;
+  var match;
+  while ((match = regex.exec(d)) !== null) {
+    if (match[1]) tokens.push({type: 'cmd', val: match[1]});
+    else tokens.push({type: 'num', val: parseFloat(match[2])});
+  }
+
+  var px = 0, py = 0;
+  var cmd = null;
+  var i = 0;
+
+  function nextArgs(count) {
+    var res = [];
+    for (var k = 0; k < count; k++) {
+      if (i < tokens.length && tokens[i].type === 'num') {
+        res.push(tokens[i++].val);
+      } else {
+        break;
+      }
+    }
+    return res.length === count ? res : null;
+  }
+
+  while (i < tokens.length) {
+    var t = tokens[i];
+    if (t.type === 'cmd') {
+      cmd = t.val;
+      i++;
+    } else {
+      if (cmd === 'M') cmd = 'L';
+      else if (cmd === 'm') cmd = 'l';
+      else if (!cmd) { i++; continue; }
+    }
+
+    var isRel = (cmd >= 'a' && cmd <= 'z');
+    var c = cmd.toUpperCase();
+
+    if (c === 'M' || c === 'L') {
+      var p = nextArgs(2);
+      if (!p) break;
+      var x = p[0], y = p[1];
+      if (isRel) { x += px; y += py; }
+      px = x; py = y;
+      vertices.push([px, py]);
+      inTangents.push([0, 0]);
+      outTangents.push([0, 0]);
+    } else if (c === 'C') {
+      var p = nextArgs(6);
+      if (!p) break;
+      var x1 = p[0], y1 = p[1], x2 = p[2], y2 = p[3], x = p[4], y = p[5];
+      if (isRel) {
+        x1 += px; y1 += py;
+        x2 += px; y2 += py;
+        x += px; y += py;
+      }
+      if (vertices.length > 0) {
+        outTangents[vertices.length - 1] = [x1 - px, y1 - py];
+      }
+      px = x; py = y;
+      vertices.push([px, py]);
+      inTangents.push([x2 - px, y2 - py]);
+      outTangents.push([0, 0]);
+    } else if (c === 'V') {
+      var p = nextArgs(1);
+      if (!p) break;
+      var y = p[0];
+      if (isRel) { y += py; }
+      py = y;
+      vertices.push([px, py]);
+      inTangents.push([0, 0]);
+      outTangents.push([0, 0]);
+    } else if (c === 'H') {
+      var p = nextArgs(1);
+      if (!p) break;
+      var x = p[0];
+      if (isRel) { x += px; }
+      px = x;
+      vertices.push([px, py]);
+      inTangents.push([0, 0]);
+      outTangents.push([0, 0]);
+    } else if (c === 'Z') {
+      closed = true;
+    } else {
+      while (i < tokens.length && tokens[i].type === 'num') i++;
+    }
+  }
+
+  return {
+    vertices: vertices,
+    inTangents: inTangents,
+    outTangents: outTangents,
+    closed: closed
+  };
 }
