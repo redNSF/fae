@@ -11,7 +11,7 @@
     "currentuser"
   ],
   "networkAccess": {
-    "allowedDomains": [],
+    "allowedDomains": ["none"],
     "devAllowedDomains": [
       "http://localhost:7963"
     ]
