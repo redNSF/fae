@@ -4,9 +4,16 @@
   "name": "FAE",
   "main": "code.js",
   "ui": "ui.html",
-  "permissions": ["currentuser"],
+  "editorType": [
+    "figma"
+  ],
+  "permissions": [
+    "currentuser"
+  ],
   "networkAccess": {
-    "allowedDomains": ["http://localhost:7963"],
-    "devAllowedDomains": ["http://localhost:7963"]
+    "allowedDomains": [],
+    "devAllowedDomains": [
+      "http://localhost:7963"
+    ]
   }
 }
