@@ -184,7 +184,25 @@ function serializeNode(node, settings) {
     if (node.mainComponent) {
       data.mainComponentId = node.mainComponent.id;
     }
-    data.componentProperties = node.componentProperties;
+    // Safely extract componentProperties — INSTANCE_SWAP values are live
+    // Figma BaseNode objects which are NOT JSON-serializable and will cause
+    // figma.ui.postMessage to fail silently, freezing the UI.
+    if (node.componentProperties) {
+      try {
+        var safeProps = {};
+        var rawProps = node.componentProperties;
+        for (var propKey in rawProps) {
+          if (!Object.prototype.hasOwnProperty.call(rawProps, propKey)) continue;
+          var prop = rawProps[propKey];
+          var propVal = prop.value;
+          if (prop.type === 'INSTANCE_SWAP' && propVal && typeof propVal === 'object') {
+            propVal = propVal.id || null; // store only node ID, not the live object
+          }
+          safeProps[propKey] = { type: prop.type, value: propVal };
+        }
+        data.componentProperties = safeProps;
+      } catch (e) { /* skip if inaccessible */ }
+    }
   }
 
   // Container children
@@ -225,62 +243,85 @@ async function exportNodeAsImage(node, settings) {
 
 // Handle push-selection message from UI
 async function handlePushSelection(settings) {
-  var selection = figma.currentPage.selection;
+  try {
+    var selection = figma.currentPage.selection;
 
-  if (selection.length === 0) {
+    if (selection.length === 0) {
+      figma.ui.postMessage({ type: 'error', message: 'No layers selected in Figma' });
+      return;
+    }
+
+    figma.ui.postMessage({
+      type: 'status',
+      message: 'Serializing ' + selection.length + ' layer(s)...'
+    });
+
+    // Serialize all selected nodes
+    var layers = [];
+    for (var i = 0; i < selection.length; i++) {
+      var node = selection[i];
+
+      // Report per-layer progress so the UI doesn't appear frozen
+      figma.ui.postMessage({
+        type: 'status',
+        message: 'Serializing ' + (i + 1) + '/' + selection.length + ': ' + node.name
+      });
+
+      var data;
+      try {
+        data = serializeNode(node, settings);
+      } catch (serErr) {
+        figma.ui.postMessage({
+          type: 'error',
+          message: 'Failed to serialize "' + node.name + '": ' + serErr.message
+        });
+        return;
+      }
+
+      // Export images and vectors as PNG
+      if (settings.export2x !== false) {
+        // Export anything with image fills
+        if (hasImageFill(node)) {
+          var imageData = await exportNodeAsImage(node, settings);
+          if (imageData) {
+            data.hasImage = true;
+            data.imageData = imageData;
+          }
+        }
+        // Export vectors as PNG (ExtendScript can't import SVG)
+        if (['VECTOR', 'BOOLEAN_OPERATION', 'STAR', 'POLYGON', 'LINE'].indexOf(node.type) !== -1) {
+          var vectorData = await exportNodeAsImage(node, settings);
+          if (vectorData) {
+            data.hasImage = true;
+            data.imageData = vectorData;
+            data.isVector = true;
+          }
+        }
+      }
+
+      layers.push(data);
+    }
+
+    // Send to UI for forwarding to bridge
+    figma.ui.postMessage({
+      type: 'send-to-bridge',
+      payload: {
+        layers: layers,
+        settings: settings,
+        pageName: figma.root.name,
+        timestamp: Date.now(),
+        source: 'figma'
+      }
+    });
+
+  } catch (err) {
+    // Top-level catch — without this, async errors are silently swallowed
+    // and the UI freezes forever on "Serializing..."
     figma.ui.postMessage({
       type: 'error',
-      message: 'No layers selected in Figma'
+      message: 'Push failed: ' + (err && err.message ? err.message : String(err))
     });
-    return;
   }
-
-  figma.ui.postMessage({
-    type: 'status',
-    message: 'Serializing ' + selection.length + ' layer(s)...'
-  });
-
-  // Serialize all selected nodes
-  var layers = [];
-  for (var i = 0; i < selection.length; i++) {
-    var node = selection[i];
-    var data = serializeNode(node, settings);
-
-    // Export images and vectors as PNG
-    if (settings.export2x !== false) {
-      // Export anything with image fills
-      if (hasImageFill(node)) {
-        var imageData = await exportNodeAsImage(node, settings);
-        if (imageData) {
-          data.hasImage = true;
-          data.imageData = imageData;
-        }
-      }
-      // Export vectors as PNG (ExtendScript can't import SVG)
-      if (['VECTOR', 'BOOLEAN_OPERATION', 'STAR', 'POLYGON', 'LINE'].indexOf(node.type) !== -1) {
-        var vectorData = await exportNodeAsImage(node, settings);
-        if (vectorData) {
-          data.hasImage = true;
-          data.imageData = vectorData;
-          data.isVector = true;
-        }
-      }
-    }
-
-    layers.push(data);
-  }
-
-  // Send to UI for forwarding to bridge
-  figma.ui.postMessage({
-    type: 'send-to-bridge',
-    payload: {
-      layers: layers,
-      settings: settings,
-      pageName: figma.root.name,
-      timestamp: Date.now(),
-      source: 'figma'
-    }
-  });
 }
 
 async function reconstructAENodes(payload) {
